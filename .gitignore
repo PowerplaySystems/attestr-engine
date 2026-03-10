@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+nul
+.claude/
+
+# Dashboard is a separate private project
+dashboard/
