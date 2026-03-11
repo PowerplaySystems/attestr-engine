@@ -85,7 +85,7 @@ export async function anomalyRoutes(app: FastifyInstance): Promise<void> {
     if (!alert) {
       return reply.code(404).send({
         error: 'Not found',
-        detail: `Anomaly alert with id "${id}" not found.`,
+        detail: 'Anomaly alert not found for the given id.',
       });
     }
 
@@ -112,7 +112,7 @@ export async function anomalyRoutes(app: FastifyInstance): Promise<void> {
     if (!alert) {
       return reply.code(404).send({
         error: 'Not found',
-        detail: `Anomaly alert with id "${id}" not found.`,
+        detail: 'Anomaly alert not found for the given id.',
       });
     }
 

@@ -17,10 +17,18 @@ const app = Fastify({
 // Capture raw request body before Fastify parses it.
 // Required for HMAC signature verification — the signature is computed over
 // the exact bytes the client sent, not a re-serialized version.
-app.addHook('preParsing', async (request, _reply, payload) => {
+app.addHook('preParsing', async (request, reply, payload) => {
+  const MAX_BODY_SIZE = 1_000_000; // 1 MB
   const chunks: Buffer[] = [];
+  let totalSize = 0;
   for await (const chunk of payload) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+    totalSize += buf.length;
+    if (totalSize > MAX_BODY_SIZE) {
+      reply.code(413).send({ error: 'Payload too large', detail: 'Request body must not exceed 1 MB.' });
+      return;
+    }
+    chunks.push(buf);
   }
   const rawBody = Buffer.concat(chunks).toString('utf-8');
   (request as any).rawBody = rawBody;
@@ -41,7 +49,7 @@ let anomalyInterval: ReturnType<typeof setInterval> | null = null;
 async function bootstrap(): Promise<void> {
   // CORS — allow dashboard origin
   await app.register(cors, {
-    origin: config.dashboardUrl || true, // true allows all in dev
+    origin: config.dashboardUrl || (config.nodeEnv === 'production' ? false : true),
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'X-Tenant-Id', 'X-Timestamp', 'X-Signature'],
   });

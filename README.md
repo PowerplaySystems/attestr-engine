@@ -50,7 +50,7 @@ All detection uses deterministic statistical methods. No external AI APIs. No da
 
 ```bash
 # Clone
-git clone https://github.com/jchouse112/attestr-engine.git
+git clone https://github.com/PowerplaySystems/attestr-engine.git
 cd attestr-engine
 
 # Install

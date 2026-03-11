@@ -24,7 +24,7 @@ const decisionBodySchema = {
     model_version: { type: 'string', maxLength: 100 },
     policy_version: { type: 'string', maxLength: 100 },
     decided_at: { type: 'string', format: 'date-time' },
-    metadata: { type: 'object' },
+    metadata: { type: 'object', maxProperties: 50, additionalProperties: true },
     input_hash: { type: 'string', minLength: 64, maxLength: 64, pattern: '^[a-f0-9]{64}$' },
   },
   additionalProperties: false,
@@ -68,7 +68,7 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
     if (!entry) {
       return reply.code(404).send({
         error: 'Not found',
-        detail: `Decision record with event_id "${event_id}" not found.`,
+        detail: 'Decision record not found for the given event_id.',
       });
     }
 

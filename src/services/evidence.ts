@@ -225,7 +225,7 @@ function normalizeEntryForHashV2(entry: LedgerEntry) {
     feature_contributions: entry.feature_contributions,
     model_version: entry.model_version || null,
     policy_version: entry.policy_version || null,
-    decided_at: entry.decided_at instanceof Date
+    decided_at: (entry.decided_at as unknown) instanceof Date
       ? (entry.decided_at as unknown as Date).toISOString()
       : String(entry.decided_at),
     metadata: entry.metadata || null,
@@ -247,7 +247,7 @@ function normalizeEntryForHashV1(entry: LedgerEntry) {
     feature_contributions: entry.feature_contributions,
     model_version: entry.model_version || null,
     policy_version: entry.policy_version || null,
-    decided_at: entry.decided_at instanceof Date
+    decided_at: (entry.decided_at as unknown) instanceof Date
       ? (entry.decided_at as unknown as Date).toISOString()
       : String(entry.decided_at),
     metadata: entry.metadata || null,

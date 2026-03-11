@@ -1,6 +1,7 @@
 import { config } from '../config.ts';
 import { canonicalJson, sha256Hash, signRecord } from './crypto.ts';
-import { getLastEntryForTenant, getEntryByEventId, insertLedgerEntry, listEntries } from '../db/queries.ts';
+import { getEntryByEventId, listEntries } from '../db/queries.ts';
+import { pool } from '../db/client.ts';
 import type { DecisionPayload, IngestResponse, LedgerEntry, ListFilters, ListDecisionsResponse } from '../types/index.ts';
 
 export async function ingestDecision(tenantId: string, payload: DecisionPayload): Promise<{ entry: LedgerEntry; created: boolean }> {
@@ -10,54 +11,86 @@ export async function ingestDecision(tenantId: string, payload: DecisionPayload)
     return { entry: existing, created: false };
   }
 
-  // 2. Get the previous record's hash (or genesis hash for first record)
-  const lastEntry = await getLastEntryForTenant(tenantId);
-  const previousHash = lastEntry?.record_hash || config.genesisHash;
-  const sequenceNumber = lastEntry ? lastEntry.sequence_number + 1 : 1;
+  // 2. Use a transaction with advisory lock to serialize writes per tenant.
+  //    This prevents two concurrent requests from reading the same last entry
+  //    and computing duplicate sequence numbers / broken hash chains.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  // 3. Build the canonical record for hashing
-  const canonicalRecord = {
-    tenant_id: tenantId,
-    event_id: payload.event_id,
-    decision: payload.decision,
-    score: payload.score ?? null,
-    reason_codes: payload.reason_codes,
-    feature_contributions: payload.feature_contributions ?? null,
-    model_version: payload.model_version ?? null,
-    policy_version: payload.policy_version ?? null,
-    decided_at: payload.decided_at,
-    metadata: payload.metadata ?? null,
-    input_hash: payload.input_hash ?? null,
-    sequence_number: sequenceNumber,
-    previous_hash: previousHash,
-  };
+    // Advisory lock keyed on tenant_id hash — serializes ingestion per tenant
+    // without blocking other tenants. pg_advisory_xact_lock auto-releases on COMMIT/ROLLBACK.
+    const lockKey = Buffer.from(tenantId).reduce((hash, byte) => ((hash << 5) - hash + byte) | 0, 0);
+    await client.query('SELECT pg_advisory_xact_lock($1)', [lockKey]);
 
-  // 4. Compute SHA-256 hash of canonical JSON
-  const recordHash = sha256Hash(canonicalJson(canonicalRecord));
+    // Now safe to read last entry — no other transaction for this tenant can be between our read and write
+    const lastResult = await client.query(
+      'SELECT record_hash, sequence_number FROM ledger_entries WHERE tenant_id = $1 ORDER BY sequence_number DESC LIMIT 1',
+      [tenantId]
+    );
+    const lastEntry = lastResult.rows[0] || null;
+    const previousHash = lastEntry?.record_hash || config.genesisHash;
+    const sequenceNumber = lastEntry ? lastEntry.sequence_number + 1 : 1;
 
-  // 5. Sign the hash with platform Ed25519 key
-  const platformSignature = signRecord(recordHash, config.ed25519PrivateKey);
+    // 3. Build the canonical record for hashing (single source of truth for field values)
+    const record = {
+      tenant_id: tenantId,
+      sequence_number: sequenceNumber,
+      event_id: payload.event_id,
+      decision: payload.decision,
+      score: payload.score ?? null,
+      reason_codes: payload.reason_codes,
+      feature_contributions: payload.feature_contributions ?? null,
+      model_version: payload.model_version ?? null,
+      policy_version: payload.policy_version ?? null,
+      decided_at: payload.decided_at,
+      metadata: payload.metadata ?? null,
+      input_hash: payload.input_hash ?? null,
+      previous_hash: previousHash,
+    };
 
-  // 6. Store in the ledger
-  const entry = await insertLedgerEntry({
-    tenant_id: tenantId,
-    sequence_number: sequenceNumber,
-    event_id: payload.event_id,
-    decision: payload.decision,
-    score: payload.score ?? null,
-    reason_codes: payload.reason_codes,
-    feature_contributions: payload.feature_contributions ?? null,
-    model_version: payload.model_version ?? null,
-    policy_version: payload.policy_version ?? null,
-    decided_at: payload.decided_at,
-    metadata: payload.metadata ?? null,
-    input_hash: payload.input_hash ?? null,
-    record_hash: recordHash,
-    previous_hash: previousHash,
-    platform_signature: platformSignature,
-  });
+    // 4. Compute SHA-256 hash of canonical JSON
+    const recordHash = sha256Hash(canonicalJson(record));
 
-  return { entry, created: true };
+    // 5. Sign the hash with platform Ed25519 key
+    const platformSignature = signRecord(recordHash, config.ed25519PrivateKey);
+
+    // 6. Store in the ledger (within same transaction).
+    //    JSON columns are serialized from the same record object used for hashing.
+    const insertResult = await client.query(
+      `INSERT INTO ledger_entries (
+        tenant_id, sequence_number, event_id, decision, score,
+        reason_codes, feature_contributions, model_version, policy_version,
+        decided_at, metadata, input_hash, record_hash, previous_hash, platform_signature
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      RETURNING *`,
+      [
+        record.tenant_id,
+        record.sequence_number,
+        record.event_id,
+        record.decision,
+        record.score,
+        JSON.stringify(record.reason_codes),
+        record.feature_contributions ? JSON.stringify(record.feature_contributions) : null,
+        record.model_version,
+        record.policy_version,
+        record.decided_at,
+        record.metadata ? JSON.stringify(record.metadata) : null,
+        record.input_hash,
+        recordHash,
+        record.previous_hash,
+        platformSignature,
+      ]
+    );
+
+    await client.query('COMMIT');
+    return { entry: insertResult.rows[0], created: true };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export function toIngestResponse(entry: LedgerEntry): IngestResponse {

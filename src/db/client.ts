@@ -12,7 +12,7 @@ const { Pool } = pg;
 export const pool = new Pool({
   connectionString: config.databaseUrl,
   ssl: config.nodeEnv === 'production' || config.databaseUrl.includes('supabase')
-    ? { rejectUnauthorized: false }
+    ? { rejectUnauthorized: true }
     : undefined,
   max: 20,
   idleTimeoutMillis: 30000,

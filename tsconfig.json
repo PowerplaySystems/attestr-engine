@@ -17,6 +17,6 @@
     "rootDir": "./src",
     "types": ["node"]
   },
-  "include": ["src/**/*", "scripts/**/*", "test/**/*"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

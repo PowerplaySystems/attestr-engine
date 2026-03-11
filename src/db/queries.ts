@@ -16,65 +16,12 @@ export async function getTenantById(tenantId: string): Promise<Tenant | null> {
 
 // === Ledger Queries ===
 
-export async function getLastEntryForTenant(tenantId: string): Promise<{ record_hash: string; sequence_number: number } | null> {
-  const result = await pool.query(
-    'SELECT record_hash, sequence_number FROM ledger_entries WHERE tenant_id = $1 ORDER BY sequence_number DESC LIMIT 1',
-    [tenantId]
-  );
-  return result.rows[0] || null;
-}
-
 export async function getEntryByEventId(tenantId: string, eventId: string): Promise<LedgerEntry | null> {
   const result = await pool.query(
     'SELECT * FROM ledger_entries WHERE tenant_id = $1 AND event_id = $2',
     [tenantId, eventId]
   );
   return result.rows[0] || null;
-}
-
-export async function insertLedgerEntry(entry: {
-  tenant_id: string;
-  sequence_number: number;
-  event_id: string;
-  decision: string;
-  score: number | null;
-  reason_codes: string[];
-  feature_contributions: Record<string, number> | null;
-  model_version: string | null;
-  policy_version: string | null;
-  decided_at: string;
-  metadata: Record<string, unknown> | null;
-  input_hash: string | null;
-  record_hash: string;
-  previous_hash: string;
-  platform_signature: string;
-}): Promise<LedgerEntry> {
-  const result = await pool.query(
-    `INSERT INTO ledger_entries (
-      tenant_id, sequence_number, event_id, decision, score,
-      reason_codes, feature_contributions, model_version, policy_version,
-      decided_at, metadata, input_hash, record_hash, previous_hash, platform_signature
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-    RETURNING *`,
-    [
-      entry.tenant_id,
-      entry.sequence_number,
-      entry.event_id,
-      entry.decision,
-      entry.score,
-      JSON.stringify(entry.reason_codes),
-      entry.feature_contributions ? JSON.stringify(entry.feature_contributions) : null,
-      entry.model_version,
-      entry.policy_version,
-      entry.decided_at,
-      entry.metadata ? JSON.stringify(entry.metadata) : null,
-      entry.input_hash,
-      entry.record_hash,
-      entry.previous_hash,
-      entry.platform_signature,
-    ]
-  );
-  return result.rows[0];
 }
 
 export async function listEntries(tenantId: string, filters: ListFilters): Promise<{ rows: LedgerEntry[]; totalCount: number }> {

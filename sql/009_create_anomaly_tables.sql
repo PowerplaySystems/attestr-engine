@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS anomaly_alerts (
     acknowledged_at TIMESTAMPTZ,
     detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_anomaly_alerts_tenant ON anomaly_alerts(tenant_id, detected_at DESC);
-CREATE INDEX idx_anomaly_alerts_type ON anomaly_alerts(tenant_id, type, detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_tenant ON anomaly_alerts(tenant_id, detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_type ON anomaly_alerts(tenant_id, type, detected_at DESC);
 
 -- Tenant baselines: rolling statistical baselines per tenant
 CREATE TABLE IF NOT EXISTS tenant_baselines (
@@ -35,4 +35,4 @@ CREATE TABLE IF NOT EXISTS tenant_baselines (
     computed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(tenant_id, window_start)
 );
-CREATE INDEX idx_baselines_tenant ON tenant_baselines(tenant_id, window_start DESC);
+CREATE INDEX IF NOT EXISTS idx_baselines_tenant ON tenant_baselines(tenant_id, window_start DESC);

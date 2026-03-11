@@ -26,7 +26,7 @@ export async function evidenceRoutes(app: FastifyInstance): Promise<void> {
     if (!result) {
       return reply.code(404).send({
         error: 'Not found',
-        detail: `Decision record with event_id "${event_id}" not found.`,
+        detail: 'Decision record not found for the given event_id.',
       });
     }
 
@@ -52,7 +52,7 @@ export async function evidenceRoutes(app: FastifyInstance): Promise<void> {
     if (!packet) {
       return reply.code(404).send({
         error: 'Not found',
-        detail: `Decision record with event_id "${event_id}" not found.`,
+        detail: 'Decision record not found for the given event_id.',
       });
     }
 
@@ -61,7 +61,7 @@ export async function evidenceRoutes(app: FastifyInstance): Promise<void> {
       return reply
         .code(200)
         .header('Content-Type', 'application/pdf')
-        .header('Content-Disposition', `attachment; filename="evidence_${event_id}_${Date.now()}.pdf"`)
+        .header('Content-Disposition', `attachment; filename="evidence_${event_id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100)}_${Date.now()}.pdf"`)
         .send(pdfBuffer);
     }
 
