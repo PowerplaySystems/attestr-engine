@@ -2,10 +2,10 @@
   "name": "attestr",
   "version": "1.0.0",
   "type": "module",
-  "description": "Fraud decision audit ledger — you make the decision, we make it provable.",
+  "description": "Fraud decision audit ledger \u2014 you make the decision, we make it provable.",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "echo 'No build step — runs with tsx'",
+    "build": "echo 'No build step \u2014 runs with tsx'",
     "start": "tsx src/index.ts",
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed-tenant.ts",
@@ -25,6 +25,7 @@
   "dependencies": {
     "@fastify/cors": "^11.2.0",
     "@fastify/rate-limit": "^10.3.0",
+    "node-fetch": "^3.3.2",
     "dotenv": "^17.3.1",
     "fastify": "^5.8.2",
     "pdfkit": "^0.17.2",

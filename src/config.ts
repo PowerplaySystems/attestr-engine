@@ -15,6 +15,13 @@ export const config = {
     pro: 1000,
     enterprise: 10000,
   } as Record<string, number>,
+  // Monthly record limits per tier
+  recordLimits: {
+    free: 500,
+    starter: 10_000,
+    pro: 100_000,
+    enterprise: Infinity,
+  } as Record<string, number>,
   // Ledger
   genesisHash: '0'.repeat(64), // SHA-256 zero hash for first record in chain
   // Merkle batching

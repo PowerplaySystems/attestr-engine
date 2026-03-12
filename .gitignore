@@ -1,6 +1,5 @@
 node_modules/
 dist/
-.env
 *.log
 .DS_Store
 nul
@@ -8,3 +7,5 @@ nul
 
 # Dashboard is a separate private project
 dashboard/
+temp_auto_push.bat
+temp_interactive_push.bat

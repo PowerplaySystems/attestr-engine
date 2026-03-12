@@ -218,6 +218,22 @@ export interface AnomalyAlertFilters {
   limit?: number;
 }
 
+// === Quota Enforcement ===
+
+export class QuotaExceededError extends Error {
+  public readonly currentUsage: number;
+  public readonly limit: number;
+  public readonly resetsAt: string;
+
+  constructor(currentUsage: number, limit: number, resetsAt: string) {
+    super(`Monthly record limit exceeded: ${currentUsage}/${limit}`);
+    this.name = 'QuotaExceededError';
+    this.currentUsage = currentUsage;
+    this.limit = limit;
+    this.resetsAt = resetsAt;
+  }
+}
+
 // === Query Filter Types ===
 
 export interface ListFilters {

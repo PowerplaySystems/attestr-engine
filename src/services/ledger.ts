@@ -2,6 +2,7 @@ import { config } from '../config.ts';
 import { canonicalJson, sha256Hash, signRecord } from './crypto.ts';
 import { getEntryByEventId, listEntries } from '../db/queries.ts';
 import { pool } from '../db/client.ts';
+import { QuotaExceededError } from '../types/index.ts';
 import type { DecisionPayload, IngestResponse, LedgerEntry, ListFilters, ListDecisionsResponse } from '../types/index.ts';
 
 export async function ingestDecision(tenantId: string, payload: DecisionPayload): Promise<{ entry: LedgerEntry; created: boolean }> {
@@ -22,6 +23,28 @@ export async function ingestDecision(tenantId: string, payload: DecisionPayload)
     // without blocking other tenants. pg_advisory_xact_lock auto-releases on COMMIT/ROLLBACK.
     const lockKey = Buffer.from(tenantId).reduce((hash, byte) => ((hash << 5) - hash + byte) | 0, 0);
     await client.query('SELECT pg_advisory_xact_lock($1)', [lockKey]);
+
+    // --- Monthly record quota check (inside lock — no race condition) ---
+    const tierResult = await client.query('SELECT tier FROM tenants WHERE id = $1', [tenantId]);
+    const tier = tierResult.rows[0]?.tier || 'free';
+    const monthlyLimit = config.recordLimits[tier] ?? config.recordLimits.free;
+
+    if (monthlyLimit !== Infinity) {
+      const monthStart = new Date();
+      monthStart.setDate(1);
+      monthStart.setHours(0, 0, 0, 0);
+
+      const { rows: [{ count }] } = await client.query(
+        'SELECT COUNT(*)::int AS count FROM ledger_entries WHERE tenant_id = $1 AND ingested_at >= $2',
+        [tenantId, monthStart.toISOString()]
+      );
+
+      if (count >= monthlyLimit) {
+        const nextMonth = new Date(monthStart);
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        throw new QuotaExceededError(count, monthlyLimit, nextMonth.toISOString());
+      }
+    }
 
     // Now safe to read last entry — no other transaction for this tenant can be between our read and write
     const lastResult = await client.query(

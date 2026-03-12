@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { authenticateRequest } from '../middleware/auth.ts';
 import { ingestDecision, toIngestResponse, getDecision, listDecisions } from '../services/ledger.ts';
+import { QuotaExceededError } from '../types/index.ts';
 import type { DecisionPayload, ListFilters } from '../types/index.ts';
 
 // JSON Schema for request validation
@@ -47,6 +48,19 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
 
       return reply.code(created ? 201 : 200).send(response);
     } catch (error: unknown) {
+      // Monthly record quota exceeded
+      if (error instanceof QuotaExceededError) {
+        return reply.code(403).send({
+          error: 'Quota exceeded',
+          detail: error.message,
+          usage: {
+            current: error.currentUsage,
+            limit: error.limit,
+            resets_at: error.resetsAt,
+          },
+          upgrade_url: 'https://attestr.io/#pricing',
+        });
+      }
       // Handle unique constraint violation (race condition on idempotency)
       if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === '23505') {
         // Unique violation — event_id already exists, fetch and return
