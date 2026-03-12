@@ -229,6 +229,37 @@ npm run dev &
 npx tsx test/e2e.ts
 ```
 
+## Dashboard
+
+The companion [Attestr Dashboard](./dashboard) provides a web UI for browsing your ledger, investigating decisions, and sharing access with compliance teams.
+
+### Features
+
+- **Overview** &mdash; Key metrics, chain health status, decision distribution, and recent activity at a glance
+- **Getting Started** &mdash; In-app API integration guide with code examples (curl, Node.js, Python) pre-filled with your credentials
+- **Event Search** &mdash; Filter and investigate decision records with cursor-based pagination
+- **Evidence Export** &mdash; Generate cryptographic evidence packets (JSON or PDF) for any decision
+- **Ledger Health** &mdash; Real-time hash chain verification and Merkle batch status
+- **Anomaly Alerts** &mdash; Monitor score drift, block rate spikes, recording gaps, and other statistical anomalies
+
+### Team Access &amp; Auditor Invites
+
+Admins can invite compliance officers or auditors via email from **Settings &rarr; Auditor Access**. Invited users get read-only access to events, evidence, ledger health, and anomaly alerts &mdash; they cannot modify settings, manage API credentials, or invite others.
+
+| Role | Can View | Can Modify Settings | Can Invite |
+|------|----------|-------------------|------------|
+| Admin | Everything | Yes | Yes |
+| Auditor | Events, Evidence, Health, Anomalies | No | No |
+
+### Running the Dashboard
+
+```bash
+cd dashboard
+npm install
+cp .env.example .env.local  # Configure Supabase + database credentials
+npm run dev                  # Starts on http://localhost:3000
+```
+
 ## Stack
 
 - **Runtime**: Node.js + TypeScript
@@ -237,6 +268,7 @@ npx tsx test/e2e.ts
 - **Cryptography**: tweetnacl (Ed25519), Node.js crypto (SHA-256, HMAC)
 - **PDF Generation**: PDFKit
 - **Tests**: Vitest
+- **Dashboard**: Next.js 15, Supabase Auth, Tailwind CSS
 
 ## Environment Variables
 
