@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { authenticateRequest } from '../middleware/auth.ts';
 import { verifyRecord, generateEvidencePacket, renderEvidencePdf } from '../services/evidence.ts';
+import { getTenantLogoUrl } from '../db/queries.ts';
 import { config } from '../config.ts';
 
 export async function evidenceRoutes(app: FastifyInstance): Promise<void> {
@@ -57,7 +58,31 @@ export async function evidenceRoutes(app: FastifyInstance): Promise<void> {
     }
 
     if (format === 'pdf') {
-      const pdfBuffer = await renderEvidencePdf(packet);
+      // PDF export requires Starter plan or above
+      const tier = request.tenant!.tier || 'free';
+      if (tier === 'free') {
+        return reply.code(403).send({
+          error: 'Feature not available',
+          detail: 'PDF evidence export requires a Starter plan or above.',
+          upgrade_url: 'https://attestr.io/#pricing',
+        });
+      }
+
+      // Fetch tenant logo for PDF branding (if set)
+      let logoBuffer: Buffer | undefined;
+      const logoUrl = await getTenantLogoUrl(request.tenant!.id);
+      if (logoUrl) {
+        try {
+          const res = await fetch(logoUrl);
+          if (res.ok) {
+            logoBuffer = Buffer.from(await res.arrayBuffer());
+          }
+        } catch {
+          // Logo fetch failed — render without it
+        }
+      }
+
+      const pdfBuffer = await renderEvidencePdf(packet, logoBuffer);
       return reply
         .code(200)
         .header('Content-Type', 'application/pdf')

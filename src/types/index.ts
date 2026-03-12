@@ -21,6 +21,7 @@ export interface Tenant {
   api_key_hash: string;
   hmac_secret: string; // stored as plain for HMAC computation (not a password)
   tier: string;
+  logo_url: string | null;
   created_at: string;
   is_active: boolean;
 }

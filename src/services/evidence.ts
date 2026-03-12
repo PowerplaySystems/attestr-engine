@@ -66,141 +66,337 @@ export async function generateEvidencePacket(tenantId: string, eventId: string):
 
 // === PDF rendering ===
 
-export async function renderEvidencePdf(packet: EvidencePacket): Promise<Buffer> {
+// Layout constants
+const PAGE_MARGIN = 50;
+const CONTENT_WIDTH = 495; // A4 width (595) - 2 * margin
+const ACCENT_COLOR = '#2563EB'; // blue-600
+const LABEL_WIDTH = 120;
+const HASH_FONT_SIZE = 7.5;
+
+// Styling helpers
+function drawHeader(doc: PDFKit.PDFDocument, logoBuffer?: Buffer) {
+  const headerY = PAGE_MARGIN;
+
+  // Client logo on left (if provided)
+  if (logoBuffer) {
+    try {
+      doc.image(logoBuffer, PAGE_MARGIN, headerY, { height: 32 });
+    } catch {
+      // Invalid image — skip
+    }
+  }
+
+  // Attestr branding on right
+  doc.fontSize(9).font('Helvetica').fillColor('#9ca3af')
+    .text('ATTESTR EVIDENCE PACKET', PAGE_MARGIN, headerY + 6, {
+      align: 'right', width: CONTENT_WIDTH,
+    });
+  doc.fontSize(7).text('attestr.io', PAGE_MARGIN, headerY + 20, {
+    align: 'right', width: CONTENT_WIDTH,
+  });
+
+  // Accent line
+  const lineY = headerY + 38;
+  doc.moveTo(PAGE_MARGIN, lineY).lineTo(PAGE_MARGIN + CONTENT_WIDTH, lineY)
+    .lineWidth(2).strokeColor(ACCENT_COLOR).stroke();
+  doc.lineWidth(1); // reset
+
+  doc.y = lineY + 16;
+}
+
+function drawSectionHeading(doc: PDFKit.PDFDocument, title: string) {
+  const y = doc.y;
+  // Left accent bar
+  doc.rect(PAGE_MARGIN, y, 3, 16).fill(ACCENT_COLOR);
+  doc.fontSize(13).font('Helvetica-Bold').fillColor('#111827')
+    .text(title, PAGE_MARGIN + 10, y + 1);
+  doc.moveDown(0.6);
+}
+
+function drawKeyValue(doc: PDFKit.PDFDocument, label: string, value: string) {
+  const y = doc.y;
+  doc.fontSize(9).font('Helvetica-Bold').fillColor('#6b7280')
+    .text(label, PAGE_MARGIN, y, { width: LABEL_WIDTH });
+  doc.fontSize(9).font('Helvetica').fillColor('#111827')
+    .text(value, PAGE_MARGIN + LABEL_WIDTH, y, { width: CONTENT_WIDTH - LABEL_WIDTH });
+  // Move below whichever column was taller
+  doc.y = Math.max(doc.y, y + 14);
+}
+
+function drawHashBox(doc: PDFKit.PDFDocument, label: string, hash: string) {
+  const boxX = PAGE_MARGIN;
+  const boxWidth = CONTENT_WIDTH;
+  const y = doc.y;
+
+  doc.fontSize(8).font('Helvetica-Bold').fillColor('#374151')
+    .text(label, boxX, y);
+  const textY = doc.y + 2;
+
+  // Gray background box
+  doc.rect(boxX, textY, boxWidth, 16).fill('#f3f4f6');
+  doc.fontSize(HASH_FONT_SIZE).font('Courier').fillColor('#374151')
+    .text(hash, boxX + 6, textY + 4, { width: boxWidth - 12 });
+  doc.y = textY + 20;
+}
+
+function drawFooter(doc: PDFKit.PDFDocument, pageNum: number, totalPages: number, version: string, generatedAt: string) {
+  doc.fontSize(7).font('Helvetica').fillColor('#9ca3af');
+  doc.text(`Evidence Packet v${version}`, PAGE_MARGIN, 780, { width: CONTENT_WIDTH / 2 });
+  doc.text(`Page ${pageNum} of ${totalPages}`, PAGE_MARGIN + CONTENT_WIDTH / 2, 780,
+    { width: CONTENT_WIDTH / 2, align: 'right' });
+  doc.text(generatedAt, PAGE_MARGIN, 790, { width: CONTENT_WIDTH, align: 'center' });
+}
+
+function drawDecisionBadge(doc: PDFKit.PDFDocument, decision: string) {
+  const colors: Record<string, { bg: string; fg: string }> = {
+    BLOCK: { bg: '#fef2f2', fg: '#dc2626' },
+    ALLOW: { bg: '#f0fdf4', fg: '#16a34a' },
+    REVIEW: { bg: '#fffbeb', fg: '#d97706' },
+  };
+  const c = colors[decision] || { bg: '#f3f4f6', fg: '#374151' };
+  const y = doc.y;
+  const badgeWidth = doc.fontSize(9).font('Helvetica-Bold').widthOfString(decision) + 16;
+
+  doc.fontSize(9).font('Helvetica-Bold').fillColor('#6b7280')
+    .text('Decision', PAGE_MARGIN, y, { width: LABEL_WIDTH });
+
+  const badgeX = PAGE_MARGIN + LABEL_WIDTH;
+  doc.roundedRect(badgeX, y - 1, badgeWidth, 15, 3).fill(c.bg);
+  doc.fontSize(9).font('Helvetica-Bold').fillColor(c.fg)
+    .text(decision, badgeX + 8, y + 2);
+  doc.fillColor('#111827'); // reset
+  doc.y = y + 18;
+}
+
+function drawScoreBar(doc: PDFKit.PDFDocument, score: number | null) {
+  const y = doc.y;
+  doc.fontSize(9).font('Helvetica-Bold').fillColor('#6b7280')
+    .text('Risk Score', PAGE_MARGIN, y, { width: LABEL_WIDTH });
+
+  if (score === null) {
+    doc.fontSize(9).font('Helvetica').fillColor('#9ca3af')
+      .text('N/A', PAGE_MARGIN + LABEL_WIDTH, y);
+    doc.y = y + 14;
+    return;
+  }
+
+  const barX = PAGE_MARGIN + LABEL_WIDTH;
+  const barWidth = 120;
+  const barHeight = 10;
+
+  // Background track
+  doc.rect(barX, y + 1, barWidth, barHeight).fill('#e5e7eb');
+  // Filled portion
+  const fillColor = score >= 0.7 ? '#dc2626' : score >= 0.4 ? '#d97706' : '#16a34a';
+  doc.rect(barX, y + 1, barWidth * score, barHeight).fill(fillColor);
+  // Score text
+  doc.fontSize(9).font('Helvetica-Bold').fillColor('#111827')
+    .text(score.toFixed(4), barX + barWidth + 8, y);
+  doc.y = y + 16;
+}
+
+export async function renderEvidencePdf(packet: EvidencePacket, logoBuffer?: Buffer): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const doc = new PDFDocument({ size: 'A4', margin: PAGE_MARGIN, bufferPages: true });
     const chunks: Buffer[] = [];
 
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // --- Page 1: Event Summary ---
-    doc.fontSize(20).font('Helvetica-Bold').text('Attestr Evidence Packet', { align: 'center' });
-    doc.moveDown(0.5);
-    doc.fontSize(10).font('Helvetica').fillColor('#666666')
-      .text(`Generated: ${packet.generated_at}`, { align: 'center' });
-    doc.moveDown(1);
-
-    // Divider
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke('#cccccc');
-    doc.moveDown(0.5);
-
-    doc.fontSize(14).font('Helvetica-Bold').fillColor('#000000').text('Event Summary');
-    doc.moveDown(0.5);
-
     const record = packet.record;
-    const summaryFields = [
-      ['Event ID', record.event_id],
-      ['Decision', record.decision],
-      ['Score', record.score !== null ? String(record.score) : 'N/A'],
-      ['Model Version', record.model_version || 'N/A'],
-      ['Policy Version', record.policy_version || 'N/A'],
-      ['Decided At', record.decided_at],
-      ['Ingested At', record.ingested_at],
-      ['Sequence Number', String(record.sequence_number)],
-      ['Input Hash', record.input_hash || 'Not provided'],
-    ];
-
-    doc.fontSize(10).font('Helvetica');
-    for (const [label, value] of summaryFields) {
-      doc.font('Helvetica-Bold').text(`${label}: `, { continued: true });
-      doc.font('Helvetica').text(value);
-    }
-
-    if (record.reason_codes && record.reason_codes.length > 0) {
-      doc.moveDown(0.5);
-      doc.font('Helvetica-Bold').text('Reason Codes:');
-      doc.font('Helvetica');
-      for (const code of record.reason_codes) {
-        doc.text(`  \u2022 ${code}`);
-      }
-    }
-
-    if (record.feature_contributions && Object.keys(record.feature_contributions).length > 0) {
-      doc.moveDown(0.5);
-      doc.font('Helvetica-Bold').text('Feature Contributions:');
-      doc.font('Helvetica');
-      for (const [feature, weight] of Object.entries(record.feature_contributions)) {
-        doc.text(`  \u2022 ${feature}: ${weight}`);
-      }
-    }
-
-    // --- Page 2: Integrity Verification ---
-    doc.addPage();
-    doc.fontSize(14).font('Helvetica-Bold').text('Integrity Verification');
-    doc.moveDown(0.5);
-
     const integrity = packet.integrity;
-    const checks = [
-      ['Record Hash Valid', integrity.hash_chain.chain_valid ? 'hash recomputed correctly' : 'hash mismatch detected'],
-      ['Hash Chain Valid', integrity.hash_chain.chain_valid],
-      ['Platform Signature Valid', integrity.signature_valid],
-      ['Merkle Proof Valid', integrity.merkle_proof ? integrity.merkle_proof.proof_valid : 'Not yet batched'],
-      ['Input Hash Present', record.input_hash ? true : 'Not provided (single-attestation only)'],
-    ];
 
-    doc.fontSize(10);
-    for (const [label, value] of checks) {
-      const passed = value === true || value === 'hash recomputed correctly';
-      const icon = typeof value === 'boolean' ? (value ? '\u2713' : '\u2717') : '\u2014';
-      const color = typeof value === 'boolean' ? (value ? '#22c55e' : '#ef4444') : '#a3a3a3';
-      doc.fillColor(color).font('Helvetica-Bold').text(`${icon} `, { continued: true });
-      doc.fillColor('#000000').font('Helvetica-Bold').text(`${label}: `, { continued: true });
-      doc.font('Helvetica').text(typeof value === 'boolean' ? (value ? 'PASS' : 'FAIL') : String(value));
+    // ── Page 1: Event Summary ───────────────────────────────
+    drawHeader(doc, logoBuffer);
+
+    drawSectionHeading(doc, 'Event Summary');
+
+    drawKeyValue(doc, 'Event ID', record.event_id);
+    drawDecisionBadge(doc, record.decision);
+    drawScoreBar(doc, record.score !== null ? parseFloat(String(record.score)) : null);
+    drawKeyValue(doc, 'Model Version', record.model_version || 'N/A');
+    drawKeyValue(doc, 'Policy Version', record.policy_version || 'N/A');
+    drawKeyValue(doc, 'Decided At', String(record.decided_at));
+    drawKeyValue(doc, 'Ingested At', String(record.ingested_at));
+    drawKeyValue(doc, 'Sequence #', String(record.sequence_number));
+
+    if (record.input_hash) {
+      doc.moveDown(0.3);
+      drawHashBox(doc, 'Input Hash (Client Attestation)', record.input_hash);
     }
 
-    doc.moveDown(1);
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke('#cccccc');
-    doc.moveDown(0.5);
-
-    doc.fontSize(12).font('Helvetica-Bold').fillColor('#000000').text('Hash Chain Details');
-    doc.moveDown(0.3);
-    doc.fontSize(8).font('Courier');
-    doc.text(`Record Hash:   ${integrity.record_hash}`);
-    doc.text(`Previous Hash: ${integrity.hash_chain.previous_hash}`);
-    if (integrity.hash_chain.next_hash) {
-      doc.text(`Next Hash:     ${integrity.hash_chain.next_hash}`);
+    // Reason codes as inline tags
+    if (record.reason_codes && record.reason_codes.length > 0) {
+      doc.moveDown(0.3);
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#6b7280')
+        .text('Reason Codes', PAGE_MARGIN, doc.y);
+      doc.moveDown(0.2);
+      let tagX = PAGE_MARGIN;
+      const tagY = doc.y;
+      for (const code of record.reason_codes) {
+        const w = doc.fontSize(8).font('Courier').widthOfString(code) + 12;
+        if (tagX + w > PAGE_MARGIN + CONTENT_WIDTH) {
+          tagX = PAGE_MARGIN;
+          doc.y += 16;
+        }
+        doc.roundedRect(tagX, doc.y, w, 14, 2).fill('#f3f4f6');
+        doc.fontSize(8).font('Courier').fillColor('#374151')
+          .text(code, tagX + 6, doc.y + 3);
+        tagX += w + 4;
+      }
+      doc.y = doc.y + 18;
     }
 
-    if (integrity.merkle_proof) {
-      doc.moveDown(0.5);
-      doc.fontSize(12).font('Helvetica-Bold').text('Merkle Proof Details');
+    // Feature contributions
+    if (record.feature_contributions && Object.keys(record.feature_contributions).length > 0) {
       doc.moveDown(0.3);
-      doc.fontSize(8).font('Courier');
-      doc.text(`Batch #${integrity.merkle_proof.batch_number}  (ID: ${integrity.merkle_proof.batch_id})`);
-      doc.text(`Batch Root: ${integrity.merkle_proof.batch_root}`);
-      doc.text(`Root Signature: ${integrity.merkle_proof.root_signature}`);
-      doc.moveDown(0.3);
-      doc.text('Proof Path (leaf to root):');
-      for (let i = 0; i < integrity.merkle_proof.proof_path.length; i++) {
-        const s = integrity.merkle_proof.proof_path[i];
-        doc.text(`  Level ${i}: [${s.direction}] ${s.hash}`);
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#6b7280')
+        .text('Feature Contributions', PAGE_MARGIN, doc.y);
+      doc.moveDown(0.2);
+      doc.fontSize(9).font('Helvetica').fillColor('#111827');
+      for (const [feature, weight] of Object.entries(record.feature_contributions)) {
+        const w = typeof weight === 'number' ? weight : parseFloat(String(weight));
+        drawKeyValue(doc, `  ${feature}`, w.toFixed(4));
       }
     }
 
-    // --- Page 3: Platform Signature & Verification Key ---
+    // Metadata (compact JSON box)
+    if (record.metadata && Object.keys(record.metadata).length > 0) {
+      doc.moveDown(0.3);
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#6b7280')
+        .text('Metadata', PAGE_MARGIN, doc.y);
+      const metaY = doc.y + 2;
+      const metaStr = JSON.stringify(record.metadata, null, 2);
+      const metaHeight = Math.min(doc.fontSize(7).font('Courier').heightOfString(metaStr, {
+        width: CONTENT_WIDTH - 12,
+      }) + 8, 100); // cap height
+      doc.rect(PAGE_MARGIN, metaY, CONTENT_WIDTH, metaHeight).fill('#f9fafb');
+      doc.fontSize(7).font('Courier').fillColor('#374151')
+        .text(metaStr, PAGE_MARGIN + 6, metaY + 4, {
+          width: CONTENT_WIDTH - 12, height: metaHeight - 4, ellipsis: true,
+        });
+      doc.y = metaY + metaHeight + 4;
+    }
+
+    // ── Page 2: Integrity Verification ──────────────────────
     doc.addPage();
-    doc.fontSize(14).font('Helvetica-Bold').fillColor('#000000').text('Cryptographic Details');
+    drawHeader(doc, logoBuffer);
+
+    drawSectionHeading(doc, 'Integrity Verification');
+
+    const checks: [string, boolean | string][] = [
+      ['Record Hash', integrity.hash_chain.chain_valid ? true : 'hash mismatch'],
+      ['Hash Chain', integrity.hash_chain.chain_valid],
+      ['Platform Signature', integrity.signature_valid],
+      ['Merkle Proof', integrity.merkle_proof ? integrity.merkle_proof.proof_valid : 'Not yet batched'],
+      ['Input Hash (Dual Attestation)', record.input_hash ? true : 'Not provided'],
+    ];
+
+    for (const [label, value] of checks) {
+      const y = doc.y;
+      const passed = value === true;
+      const failed = value === false;
+      const icon = passed ? '\u2713' : failed ? '\u2717' : '\u2014';
+      const iconColor = passed ? '#16a34a' : failed ? '#dc2626' : '#9ca3af';
+      const statusText = passed ? 'PASS' : failed ? 'FAIL' : String(value);
+      const statusColor = passed ? '#16a34a' : failed ? '#dc2626' : '#6b7280';
+
+      // Light background row
+      const rowBg = passed ? '#f0fdf4' : failed ? '#fef2f2' : '#f9fafb';
+      doc.rect(PAGE_MARGIN, y - 2, CONTENT_WIDTH, 18).fill(rowBg);
+
+      doc.fontSize(12).font('Helvetica-Bold').fillColor(iconColor)
+        .text(icon, PAGE_MARGIN + 6, y, { continued: false });
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#111827')
+        .text(label, PAGE_MARGIN + 24, y + 1, { width: 220, continued: false });
+      doc.fontSize(9).font('Helvetica-Bold').fillColor(statusColor)
+        .text(statusText, PAGE_MARGIN + 260, y + 1, { width: CONTENT_WIDTH - 260 });
+      doc.y = y + 22;
+    }
+
+    // Hash chain details
+    doc.moveDown(0.6);
+    drawSectionHeading(doc, 'Hash Chain Details');
+    drawHashBox(doc, 'Record Hash', integrity.record_hash);
+    drawHashBox(doc, 'Previous Hash', integrity.hash_chain.previous_hash);
+    if (integrity.hash_chain.next_hash) {
+      drawHashBox(doc, 'Next Hash', integrity.hash_chain.next_hash);
+    }
+
+    // Merkle proof details
+    if (integrity.merkle_proof) {
+      doc.moveDown(0.4);
+      drawSectionHeading(doc, 'Merkle Proof Details');
+
+      drawKeyValue(doc, 'Batch', `#${integrity.merkle_proof.batch_number}`);
+      drawKeyValue(doc, 'Batch ID', integrity.merkle_proof.batch_id);
+      doc.moveDown(0.2);
+      drawHashBox(doc, 'Batch Root', integrity.merkle_proof.batch_root);
+      drawHashBox(doc, 'Root Signature', integrity.merkle_proof.root_signature);
+
+      if (integrity.merkle_proof.proof_path.length > 0) {
+        doc.moveDown(0.2);
+        doc.fontSize(8).font('Helvetica-Bold').fillColor('#6b7280')
+          .text('Proof Path (leaf \u2192 root)', PAGE_MARGIN, doc.y);
+        doc.moveDown(0.2);
+        for (let i = 0; i < integrity.merkle_proof.proof_path.length; i++) {
+          const s = integrity.merkle_proof.proof_path[i];
+          const y = doc.y;
+          doc.fontSize(7).font('Helvetica').fillColor('#9ca3af')
+            .text(`L${i}`, PAGE_MARGIN + 4, y);
+          doc.fontSize(7).font('Courier').fillColor('#374151')
+            .text(`[${s.direction}] ${s.hash}`, PAGE_MARGIN + 24, y, { width: CONTENT_WIDTH - 24 });
+          doc.y = Math.max(doc.y, y + 11);
+        }
+      }
+    }
+
+    // ── Page 3: Cryptographic Details ───────────────────────
+    doc.addPage();
+    drawHeader(doc, logoBuffer);
+
+    drawSectionHeading(doc, 'Cryptographic Details');
+
+    drawHashBox(doc, 'Platform Signature (Ed25519)', integrity.platform_signature);
+    doc.moveDown(0.3);
+    drawHashBox(doc, 'Verification Key (Ed25519 Public Key, Base64)', packet.verification_key);
+
+    // Verification instructions
+    doc.moveDown(1);
+    doc.moveTo(PAGE_MARGIN, doc.y).lineTo(PAGE_MARGIN + CONTENT_WIDTH, doc.y)
+      .strokeColor('#e5e7eb').stroke();
     doc.moveDown(0.5);
 
-    doc.fontSize(10).font('Helvetica-Bold').text('Platform Signature:');
-    doc.fontSize(8).font('Courier').text(integrity.platform_signature);
-    doc.moveDown(0.5);
+    drawSectionHeading(doc, 'Independent Verification');
 
-    doc.fontSize(10).font('Helvetica-Bold').text('Verification Key (Ed25519 Public Key, Base64):');
-    doc.fontSize(8).font('Courier').text(packet.verification_key);
-    doc.moveDown(1);
+    doc.fontSize(8.5).font('Helvetica').fillColor('#4b5563')
+      .text('To verify this evidence packet independently:', PAGE_MARGIN, doc.y, {
+        width: CONTENT_WIDTH, lineGap: 3,
+      });
+    doc.moveDown(0.3);
 
-    doc.fontSize(9).font('Helvetica').fillColor('#666666')
-      .text('This evidence packet was generated by Attestr (attestr.io). To verify independently, '
-        + 'recompute the SHA-256 hash from the canonical JSON record, verify the Ed25519 signature '
-        + 'using the public key above, and validate the Merkle proof path from the leaf to the batch root.',
-        { lineGap: 2 });
+    const steps = [
+      'Reconstruct the canonical JSON record from the event data fields.',
+      'Compute the SHA-256 hash over the canonical JSON and compare to the Record Hash.',
+      'Verify the Ed25519 signature using the public key above against the Record Hash.',
+      'Confirm the previous_hash field matches the prior record\'s hash (hash chain link).',
+      'If a Merkle proof is present, walk the proof path from the leaf hash to the batch root.',
+    ];
+    for (let i = 0; i < steps.length; i++) {
+      doc.fontSize(8.5).font('Helvetica').fillColor('#4b5563');
+      const y = doc.y;
+      doc.font('Helvetica-Bold').text(`${i + 1}.`, PAGE_MARGIN + 4, y, { continued: false });
+      doc.font('Helvetica').text(steps[i], PAGE_MARGIN + 20, y, { width: CONTENT_WIDTH - 20, lineGap: 1 });
+      doc.y = Math.max(doc.y, y + 12);
+    }
 
-    doc.moveDown(1);
-    doc.fontSize(8).fillColor('#a3a3a3')
-      .text(`Evidence Packet v${packet.version} | Generated ${packet.generated_at}`, { align: 'center' });
+    // Add footers to all pages
+    const totalPages = doc.bufferedPageRange().count;
+    for (let i = 0; i < totalPages; i++) {
+      doc.switchToPage(i);
+      drawFooter(doc, i + 1, totalPages, packet.version, packet.generated_at);
+    }
 
     doc.end();
   });

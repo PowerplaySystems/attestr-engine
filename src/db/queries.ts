@@ -14,6 +14,14 @@ export async function getTenantById(tenantId: string): Promise<Tenant | null> {
   return result.rows[0] || null;
 }
 
+export async function getTenantLogoUrl(tenantId: string): Promise<string | null> {
+  const result = await pool.query(
+    'SELECT logo_url FROM tenants WHERE id = $1',
+    [tenantId]
+  );
+  return result.rows[0]?.logo_url || null;
+}
+
 // === Ledger Queries ===
 
 export async function getEntryByEventId(tenantId: string, eventId: string): Promise<LedgerEntry | null> {
